@@ -19,7 +19,7 @@ npm install --save-dev aws-lambda-upload
 ## Usage
 
 ```
-$ $(npm bin)/aws-lambda-upload [--help] [-l <lambda>] [-r <region>] <start_file>
+$(npm bin)/aws-lambda-upload [--help] [-l <lambda>] [-r <region>] <start_file>
 ```
 
 It assumes you already created a Lambda on AWS e.g. using [AWS Lambda
@@ -27,7 +27,7 @@ console](https://console.aws.amazon.com/lambda). If you have a Lambda called
 `my_lambda`, and a file called `lib/my_lambda.js`, you can simply run
 
 ```
-$ $(npm bin)/aws-lambda-upload lib/my_lambda.js
+$(npm bin)/aws-lambda-upload lib/my_lambda.js
 ```
 
 (If the name of the Lambda differs from the name of the file, specify it using `--lambda` option.)
@@ -41,8 +41,8 @@ isn't, a helper file `my_lambda.js` will be added to the zip archive for you,
 and all imports will still work.
 
 Note that it does NOT package your entire directory or all of `node_modules/`.
-It uses [browserify](http://browserify.org/) to examind the `require()` calls
-in your files, and recursively collect all dependencies. For files in
+It uses [browserify](http://browserify.org/) to examine the `require()` calls
+in your files, and recursively collects all dependencies. For files in
 `node_modules/`, it also includes any `package.json` files as they affect the
 import logic.
 
