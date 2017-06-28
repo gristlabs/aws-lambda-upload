@@ -61,16 +61,20 @@ describe('packageLambda', function() {
     .then(() => main.packageLambda('foo.js', zipFile))
     .then(() => child.execFileAsync('unzip', ['-l', zipFile]))
     .then(stdout => {
-      assert.deepEqual(stdout.split("\n").map(line => line.split(/ +/)[4]).filter(Boolean), [
-        "Name",
-        "----",
-        "foo.js",
-        "lib/dep.js",
-        "node_modules/dep1/hello.js",
-        "node_modules/dep1/package.json",
-        "node_modules/dep2/bye.js",
-        "node_modules/dep2/package.json",
-      ]);
+      // Compare just the last word, and ignore lines that are empty or have no word chars.
+      // (There is a difference, e.g. between Linux and Mac on whether '----' is printed.)
+      assert.deepEqual(stdout.split("\n").map(line => line.split(/ +/)[4])
+        .filter(name => name && /\w/.test(name)),
+        [
+          "Name",
+          "foo.js",
+          "lib/dep.js",
+          "node_modules/dep1/hello.js",
+          "node_modules/dep1/package.json",
+          "node_modules/dep2/bye.js",
+          "node_modules/dep2/package.json",
+        ]
+      );
     });
   });
 
@@ -81,15 +85,17 @@ describe('packageLambda', function() {
     .then(() => main.packageLambda('lib/bar.js', zipFile))
     .then(() => child.execFileAsync('unzip', ['-l', zipFile]))
     .then(stdout => {
-      assert.deepEqual(stdout.split("\n").map(line => line.split(/ +/)[4]).filter(Boolean), [
-        "Name",
-        "----",
-        "lib/bar.js",
-        "lib/dep.js",
-        "node_modules/dep2/bye.js",
-        "node_modules/dep2/package.json",
-        "bar.js",
-      ]);
+      assert.deepEqual(stdout.split("\n").map(line => line.split(/ +/)[4])
+        .filter(name => name && /\w/.test(name)),
+        [
+          "Name",
+          "lib/bar.js",
+          "lib/dep.js",
+          "node_modules/dep2/bye.js",
+          "node_modules/dep2/package.json",
+          "bar.js",
+        ]
+      );
     });
   });
 });
