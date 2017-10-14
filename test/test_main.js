@@ -26,6 +26,51 @@ describe("listDependencies", function() {
       "test/fixtures/lib/dep.js",
       "test/fixtures/node_modules/dep2/bye.js",
       "test/fixtures/node_modules/dep2/package.json",
+    ]))
+  });
+
+  it("should support ignoreMissing option", function() {
+    // Absolute imports will fail without some help.
+    return main.listDependencies('test/fixtures/abs.js')
+    .then(() => assert(false, 'Expected listDependencies abs.js to fail'),
+      (err) => assert(/Cannot find.*lib\/dep/.test(err.message))
+    )
+
+    // But with ignoreMissing=true, they'll work, and find as much as they find.
+    .then(() => main.listDependencies('test/fixtures/abs.js', {ignoreMissing: true}))
+    .then(paths => assert.deepEqual(paths, [
+      "test/fixtures/abs.js",
+      "test/fixtures/node_modules/dep1/hello.js",
+      "test/fixtures/node_modules/dep1/package.json",
+    ]));
+  });
+
+  it("should support paths option", function() {
+    return main.listDependencies('test/fixtures/abs.js', {paths: ['test/fixtures']})
+    .then(paths => assert.deepEqual(paths, [
+      "test/fixtures/abs.js",
+      "test/fixtures/lib/dep.js",
+      "test/fixtures/node_modules/dep1/hello.js",
+      "test/fixtures/node_modules/dep1/package.json",
+      "test/fixtures/node_modules/dep2/bye.js",
+      "test/fixtures/node_modules/dep2/package.json",
+    ]));
+  });
+
+  it("should find typescript files", function() {
+    this.timeout(5000);
+    return main.listDependencies('test/fixtures/ts1.js', {
+      paths: ['test/fixtures'],
+      tsconfig: 'test/fixtures/tsconfig.json'
+    })
+    .then(paths => assert.deepEqual(paths, [
+      "test/fixtures/lib/dep.js",
+      "test/fixtures/lib/ts2.ts",
+      "test/fixtures/node_modules/dep1/hello.js",
+      "test/fixtures/node_modules/dep1/package.json",
+      "test/fixtures/node_modules/dep2/bye.js",
+      "test/fixtures/node_modules/dep2/package.json",
+      "test/fixtures/ts1.js",
     ]));
   });
 });
