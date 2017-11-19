@@ -1,7 +1,7 @@
 "use strict";
 
 import * as AWS from "aws-sdk";
-import * as bluebird from "bluebird";
+import {fromCallback} from "bluebird";
 import * as childProcess from "child_process";
 import {main as collectJsDeps} from "collect-js-deps";
 import * as commander from "commander";
@@ -10,10 +10,6 @@ import * as fse from "fs-extra";
 import * as path from "path";
 import * as tmp from "tmp";
 import {yamlParse} from "yaml-cfn";
-
-bluebird.promisifyAll(childProcess);
-bluebird.promisifyAll(tmp);
-bluebird.config({longStackTraces: true});
 
 tmp.setGracefulCleanup();
 
@@ -31,10 +27,11 @@ async function _makeTmpZipFile(startPath: string, browserifyArgs: string[]): Pro
     return zipFiles.get(startPath);
   }
 
-  const stageDir = await bluebird.fromCallback((cb) => tmp.dir({unsafeCleanup: true}, cb));
+  const stageDir = await fromCallback((cb) => tmp.dir({unsafeCleanup: true}, cb));
   try {
-    const zipPath = await bluebird.fromCallback((cb) => tmp.file(
-      {prefix: "aws-lambda", postfix: ".zip", discardDescriptor: true}, cb));
+    const zipPath = await fromCallback((cb) =>
+      tmp.file({prefix: "aws-lambda", postfix: ".zip", discardDescriptor: true}, cb));
+
     await collectJsDeps(["--outdir", stageDir, ...browserifyArgs]);
 
     // TODO Test what happens when startPath is absolute, and when dirname IS in fact "."
@@ -45,8 +42,9 @@ async function _makeTmpZipFile(startPath: string, browserifyArgs: string[]): Pro
       const stubPath = path.join(stageDir, path.basename(startPath));
       await fse.writeFile(stubPath, `module.exports = require("${startPath}");\b`);
     }
-    const stdout = await bluebird.fromCallback((cb) =>
+    const stdout = await fromCallback((cb) =>
       childProcess.execFile("zip", ["-q", zipPath, "."], {cwd: stageDir}, cb));
+
     // tslint:disable-next-line:no-console TODO
     console.log("ZIP OUTPUT", stdout);
     zipFiles.set(startPath, zipPath);
@@ -249,7 +247,7 @@ export async function cloudformationPackageOutput(templatePath: string, outputPa
   const json = JSON.stringify(template, null, 2);
   options.logger.info(`Writing out process template to ${outputPath}`);
   if (outputPath === "-") {
-    return bluebird.fromCallback((cb) => process.stdout.write(json, "utf8", cb));
+    return fromCallback((cb) => process.stdout.write(json, "utf8", cb));
   } else {
     return fse.writeFile(outputPath, json);
   }

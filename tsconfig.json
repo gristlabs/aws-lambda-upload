@@ -1,9 +1,13 @@
 {
   "compilerOptions": {
-    "target": "es6",
+    "target": "es2016",
     "strict": true,
     "noUnusedLocals": true,
-    "moduleResolution": "node",
-    "baseUrl": "."
-  }
+    "module": "commonjs",
+    "baseUrl": ".",
+    "outDir": "dist"
+  },
+  "files": [
+    "lib/main.ts"
+  ]
 }
