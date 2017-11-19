@@ -1,14 +1,27 @@
 "use strict";
 /* global describe, it, beforeEach, afterEach */
 
-let assert = require('assert');
-let bluebird = require('bluebird');
-let tmp = bluebird.promisifyAll(require('tmp'));
-let child = bluebird.promisifyAll(require('child_process'));
-let main = require('../lib/main.js');
+const assert = require('chai').assert;
+const bluebird = require('bluebird');
+const tmp = bluebird.promisifyAll(require('tmp'));
+const child = bluebird.promisifyAll(require('child_process'));
+const main = require('../dist/main.js');
 
 tmp.setGracefulCleanup();
 
+describe('spawn', function() {
+  it('should resolve or reject returned promise', function() {
+    return main.spawn('true', [])
+    .then(() => main.spawn('false', []))
+    .then(
+      () => assert(false, "Command should have failed"),
+      err => assert.equal(err.message, "Command failed with exit code 1")
+    );
+  });
+});
+
+
+/*
 describe("listDependencies", function() {
   it("should recursively find dependencies and package.json files", function() {
     return main.listDependencies('test/fixtures/foo.js')
@@ -74,22 +87,17 @@ describe("listDependencies", function() {
     ]));
   });
 });
+*/
 
-
-describe('spawn', function() {
-  it('should resolve or reject returned promise', function() {
-    return main.spawn('true', [])
-    .then(() => main.spawn('false', []))
-    .then(
-      () => assert(false, "Command should have failed"),
-      err => assert.equal(err.message, "Command failed with exit code 1")
-    );
-  });
-})
 
 
 describe('packageLambda', function() {
-  let cwd;
+  let cwd, log = [];
+  const logger = {
+    info(msg) { log.push(msg); },
+    debug(msg) { log.push(msg); },
+  };
+
   beforeEach(function() {
     cwd = process.cwd();
     process.chdir('test/fixtures');
@@ -97,50 +105,64 @@ describe('packageLambda', function() {
 
   afterEach(function() {
     process.chdir(cwd);
+    log.length = 0;
   });
 
   it('should create a zip-file', function() {
-    let zipFile;
-    return tmp.fileAsync({prefix: 'test-aws-lamda-upload', discardDescriptor: true})
-    .then(tmpPath => { zipFile = tmpPath; })
-    .then(() => main.packageLambda('foo.js', zipFile))
-    .then(() => child.execFileAsync('unzip', ['-l', zipFile]))
-    .then(stdout => {
-      // Compare just the last word, and ignore lines that are empty or have no word chars.
-      // (There is a difference, e.g. between Linux and Mac on whether '----' is printed.)
-      assert.deepEqual(stdout.split("\n").map(line => line.split(/ +/)[4])
-        .filter(name => name && /\w/.test(name)),
-        [
-          "Name",
-          "foo.js",
-          "lib/dep.js",
-          "node_modules/dep1/hello.js",
-          "node_modules/dep1/package.json",
-          "node_modules/dep2/bye.js",
-          "node_modules/dep2/package.json",
-        ]
-      );
+    return tmp.tmpNameAsync({prefix: 'test-aws-lamda-upload'})
+    .then(zipFile => {
+      return main.packageZipLocal('foo.js', zipFile, {browserifyArgs: [], logger})
+      .then(result => assert.equal(result, zipFile))
+      .then(() => listZipNames(zipFile));
+    })
+    .then(names => {
+      assert.deepEqual(names, [
+        "foo.js",
+        "lib/",
+        "lib/dep.js",
+        "node_modules/",
+        "node_modules/dep1/",
+        "node_modules/dep1/hello.js",
+        "node_modules/dep1/package.json",
+        "node_modules/dep2/",
+        "node_modules/dep2/bye.js",
+        "node_modules/dep2/package.json",
+      ]);
+      assert.match(log[0], /Packaging foo.js/);
     });
   });
 
   it('should create a helper file if startFile is not at top level', function() {
-    let zipFile;
-    return tmp.fileAsync({prefix: 'test-aws-lamda-upload', discardDescriptor: true})
-    .then(tmpPath => { zipFile = tmpPath; })
-    .then(() => main.packageLambda('lib/bar.js', zipFile))
-    .then(() => child.execFileAsync('unzip', ['-l', zipFile]))
-    .then(stdout => {
-      assert.deepEqual(stdout.split("\n").map(line => line.split(/ +/)[4])
-        .filter(name => name && /\w/.test(name)),
-        [
-          "Name",
-          "lib/bar.js",
-          "lib/dep.js",
-          "node_modules/dep2/bye.js",
-          "node_modules/dep2/package.json",
-          "bar.js",
-        ]
-      );
+    return tmp.tmpNameAsync({prefix: 'test-aws-lamda-upload'})
+    .then(zipFile => {
+      return main.packageZipLocal('lib/bar.js', zipFile, {browserifyArgs: [], logger})
+      .then(result => assert.equal(result, zipFile))
+      .then(() => listZipNames(zipFile));
+    })
+    .then(names => {
+      assert.deepEqual(names, [
+        "bar.js",
+        "lib/",
+        "lib/bar.js",
+        "lib/dep.js",
+        "node_modules/",
+        "node_modules/dep2/",
+        "node_modules/dep2/bye.js",
+        "node_modules/dep2/package.json",
+      ]);
+      assert.match(log[0], /Packaging lib\/bar.js/);
     });
   });
+
+  function listZipNames(zipFile) {
+    return child.execFileAsync('unzip', ['-l', zipFile])
+    .then(stdout => {
+      // Include just the last word (file name), and ignore lines that are empty or have no word
+      // chars. (E.g. Linux and Max differ on whether '----' is printed.)
+      return stdout.split("\n").map(line => line.split(/ +/)[4])
+        .filter(name => name && /\w/.test(name))
+        // Also filter out the "Name" header in the first line.
+        .filter((name, i) => !(i === 0 && name === 'Name'));
+    });
+  }
 });
