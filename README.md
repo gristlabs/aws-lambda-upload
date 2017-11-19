@@ -21,24 +21,24 @@ npm install --save-dev aws-lambda-upload
 ```
 $(npm bin)/aws-lambda-upload [options] <start-file>
 ```
-Here, `<start-file>` is the path of the JS file to serve as the entry point into the Lambda. Note that in all cases, you'll use the basename of `<start-file>` as the filename to use for Lambda handler (if `<start-file>` is in a subdirectory, `aws-lambda-upload` will create a top-level stub for it in the packaged archive).
+Here, `<start-file>` is the path of the JS file to serve as the entry point into the Lambda. Note that in all cases, you'll use the basename of `<start-file>` as the filename to use for Lambda handler.
 
 #### Update existing lambda
 
 Use `--lambda <name>` flag to update a Lambda with the given name that you have previously created on AWS (e.g. using [AWS Lambda
 console](https://console.aws.amazon.com/lambda)).
 
-Available programmatically as `updateLambda(startPath, lambdaName)`.
+Available programmatically as `updateLambda(startPath, lambdaName, options)`.
 
 #### Saving a local zip file
 
 Use `--zip <path>` flag to save the packaged lambda code to a zip file. It may then be used with e.g. `aws lambda update-function-code` command or as in a CloudFormation template with `aws cloudformation package` command.
 
-Available programmatically as `packageZipLocal(startPath, outputZipPath)`.
+Available programmatically as `packageZipLocal(startPath, outputZipPath, options)`.
 
 #### Saving a zip file to S3
 
-Use `--s3` to save the packaged lambda code to S3, and print the S3 object key to stdout.
+Use `--s3` to save the packaged lambda code to S3, and print the S3 URI to stdout.
 
 The zip file will be saved to the bucket named by `--s3-bucket` flag (defaulting to `"aws-lambda-upload"`),
 and within that to folder (prefix) named by `--s3-prefix` flag (defaulting to empty). The basename of the
@@ -58,9 +58,9 @@ This is similar to `aws cloudformation package` command. It will process the fol
 
 In both cases, if the relevant property is a file path, interprets it as a start JS file,
 packages it with `packageZipS3()` and replaces the property with S3 information
-in the format required by CloudFormation.
+in the format required by CloudFormation. If file path is relative, it's interpreted relative to the directory of the template.
 
-Available programmatically as `cloudformationPackage(templatePath, options)`
+Available programmatically as `cloudformationPackage(templatePath, outputPath, options)`
 
 ## Collecting dependencies
 
@@ -79,7 +79,7 @@ Actually, all browserify options are supported, by including them after `--` on 
 
 Since the main file of a Lambda must be at top-level, if `<start-path>` is in a subdirectory
 (e.g. `lib/my_lambda.js`), a same-named top-level helper file (e.g. `my_lambda.js`) will be added
-to the zip archive for you. It's a one-liner that re-export the entry module to let you use it
+to the zip archive for you. It's a one-liner that re-exports the entry module to let you use it
 as the Lambda's main file.
 
 #### Supports TypeScript!
