@@ -5,6 +5,7 @@ const chai = require('chai');
 const chaiAsPromised = require('chai-as-promised');
 const bluebird = require('bluebird');
 const fse = require('fs-extra');
+const path = require('path');
 const tmp = bluebird.promisifyAll(require('tmp'));
 const childProcess = bluebird.promisifyAll(require('child_process'));
 const main = require('../dist/main.js');
@@ -71,6 +72,19 @@ function listZipNames(zipFile) {
   });
 }
 
+
+/**
+ * Unzip archive and run the entryFile using node. Returns promise for its stdout.
+ */
+function runZipFile(zipFile, entryFile) {
+  return tmp.dirAsync({unsafeCleanup: true})
+  .then(dir => {
+    return childProcess.execFileAsync('unzip', ['-d', dir, zipFile])
+    .then(() => childProcess.execFileAsync('node', [path.join(dir, entryFile)], {cwd: dir}));
+  });
+}
+
+
 /**
  * Use in describe() to run tests with environment variable `name` set to `value`.
  */
@@ -122,7 +136,14 @@ describe('aws-lambda-upload', function() {
           'node_modules/dep2/world.js',
         ]);
         assert.match(log[0], /Packaging foo.js/);
-      });
+      })
+      .then(() => runZipFile(localZipPath, 'foo'))
+      .then(outputLines => assert.deepEqual(outputLines,
+        'imported dep1\n' +
+        'imported dep2\n' +
+        'imported lib/bar.js\n' +
+        'imported foo.js\n'
+      ));
     });
 
     it('should create a helper file if startFile is not at top level', function() {
@@ -137,6 +158,30 @@ describe('aws-lambda-upload', function() {
           'node_modules/dep2/world.js',
         ]);
         assert.match(log[0], /Packaging lib\/bar.js/);
+      })
+      .then(() => childProcess.execFileAsync('unzip', ['-q', '-c', localZipPath, 'bar.js']))
+      .then(contents => assert.include(contents, 'require("./lib/bar.js")'))
+      .then(() => runZipFile(localZipPath, 'bar'))
+      .then(outputLines => assert.deepEqual(outputLines,
+        'imported dep2\n' +
+        'imported lib/bar.js\n'
+      ));
+    });
+
+    it('should reuse existing file when a cache is used', function() {
+      const cache = new Map();
+      return main.packageZipLocal('foo.js', localZipPath, {logger})
+      .then(() => { log.length = 0; })
+      .then(() => main.packageZipLocal('foo.js', localZipPath, {logger, cache}))
+      .then(() => {
+        assert.isTrue(log.some(l => /Collecting/.test(l)));
+        assert.isFalse(log.some(l => /Reusing cached/.test(l)));
+        log.length = 0;
+      })
+      .then(() => main.packageZipLocal('foo.js', localZipPath, {logger, cache}))
+      .then(() => {
+        assert.isFalse(log.some(l => /Collecting/.test(l)));
+        assert.isTrue(log.some(l => /Reusing cached/.test(l)));
       });
     });
 
@@ -195,15 +240,20 @@ describe('aws-lambda-upload', function() {
               'node_modules/dep3/package.json',
             ]);
             assert.match(log[0], /Packaging foo_ts.ts/);
-          });
+          })
+          .then(() => runZipFile(localZipPath, 'foo_ts'))
+          .then(outputLines => assert.deepEqual(outputLines,
+            'imported dep1\n' +
+            'imported dep2\n' +
+            'imported lib/bar.js\n' +
+            'imported dep3\n' +
+            'imported lib/baz_ts.ts true\n' +
+            'imported foo_ts.ts true\n'
+          ));
         });
       });
     });
   });
-
-
-    // TODO: ensure the result is runnable
-    // TODO: want to test memoization, but it may be affecting all tests already.
 
   describe('packageZipS3', function() {
 
@@ -215,7 +265,7 @@ describe('aws-lambda-upload', function() {
       .then(s3Loc => {
         assert.deepEqual(s3Loc, {
           bucket: "aws-lambda-upload",
-          key: "e0fdbbf73f40ad5316d38ec8173b2a64"
+          key: "731c671e440cb3cea7bdc0b5bcaada2d.zip"
         });
         assert.match(log.find(l => /Bucket/.test(l)), /creating/);
         assert.match(log[log.length - 1], /uploaded/);
@@ -224,7 +274,7 @@ describe('aws-lambda-upload', function() {
         return s3.getObject({Bucket: s3Loc.bucket, Key: s3Loc.key}).promise();
       })
       .then(data => {
-        return tmp.tmpNameAsync({postfix: '.zip'})
+        return tmp.fileAsync({postfix: '.zip'})
         .then(tmpFile => fse.writeFile(tmpFile, data.Body)
           .then(() => listZipNames(tmpFile)));
       })
@@ -244,13 +294,25 @@ describe('aws-lambda-upload', function() {
       .then(s3Loc => {
         assert.deepEqual(s3Loc, {
           bucket: "aws-lambda-upload",
-          key: "e0fdbbf73f40ad5316d38ec8173b2a64"
+          key: "731c671e440cb3cea7bdc0b5bcaada2d.zip"
         });
         assert.match(log.find(l => /Bucket/.test(l)), /exists/);
         assert.match(log[log.length - 1], /skipping upload/);
       });
     });
+
+    it('should respect s3 parameters', function() {
+      const s3EndpointUrl = localstack.getService('s3').endpoint;
+      const params = {logger, s3EndpointUrl, s3Bucket: 'foo', s3Prefix: 'bar/baz/'};
+      return main.packageZipS3('lib/bar.js', params)
+      .then(s3Loc => {
+        assert.deepEqual(s3Loc, {
+          bucket: "foo",
+          key: "bar/baz/731c671e440cb3cea7bdc0b5bcaada2d.zip"
+        });
+        assert.match(log[log.length - 1], /uploaded/);
+      });
+    });
+
   });
 });
-
-// TODO: mkae sure failing tests don't leave around /tmp/ files

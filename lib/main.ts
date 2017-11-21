@@ -61,6 +61,7 @@ export async function fsWalk(topDir: string, cb: (fpath: string, stat: fse.Stats
 async function _makeTmpZipFile(startPath: string, options: ICollectOpts): Promise<string> {
   // Use memoized result if we are given a cache which has it.
   if (options.cache && options.cache.has(startPath)) {
+    options.logger.debug(`Reusing cached zip file for ${startPath}`);
     return options.cache.get(startPath)!;
   }
   const args = options.browserifyArgs || [];
@@ -72,6 +73,7 @@ async function _makeTmpZipFile(startPath: string, options: ICollectOpts): Promis
     tmp.dir({prefix: "aws-lambda-", unsafeCleanup: true}, cb));
 
   try {
+    options.logger.debug(`Collecting files from ${startPath} in ${stageDir}`);
     await collectJsDeps(["--outdir", stageDir, ...args, startPath]);
 
     // TODO Test what happens when startPath is absolute, and when dirname IS in fact "."
@@ -80,16 +82,21 @@ async function _makeTmpZipFile(startPath: string, options: ICollectOpts): Promis
       // require the entry file to be top-level. (We can't solve this by moving files around as that
       // would break relative imports.)
       const stubPath = path.join(stageDir, path.basename(startPath));
-      await fse.writeFile(stubPath, `module.exports = require("${startPath}");\n`);
+      const requirePath = path.relative("", startPath);
+      await fse.writeFile(stubPath, `module.exports = require("./${requirePath}");\n`);
     }
 
     // Set all timestamps to a constant value (0) for all files, to produce consistent zip files
     // that are identical for identical data. Otherwise timestamps cause zip files to never match.
     await fsWalk(stageDir, (fpath, st) => fse.utimes(fpath, st.atime.getTime() / 1000, 0));
 
+    // We use file() followed by remove(), rather than tmpName(), so that tmp module remembers to
+    // clean it up on exit.
     const zipPath = await fromCallback((cb) =>
-      tmp.tmpName({prefix: "aws-lambda-", postfix: ".zip"}, cb));
+      tmp.file({prefix: "aws-lambda-", postfix: ".zip"}, cb));
 
+    // We the destination zip must not exist.
+    await fse.remove(zipPath);
     await spawn("zip", ["-q", "-r", "-X", zipPath, "."], {cwd: stageDir});
 
     if (options.cache) {
@@ -184,7 +191,8 @@ export async function packageZipS3(startPath: string, options: IS3Opts = dfltOpt
   const checksumBuf = createHash("md5").update(zipData).digest();
   const checksumHex = checksumBuf.toString("hex");
   const checksumB64 = checksumBuf.toString("base64");
-  const key = s3Prefix ? `${s3Prefix}/${checksumHex}` : checksumHex;
+  const prefix = s3Prefix && !s3Prefix.endsWith("/") ? s3Prefix + "/" : (s3Prefix || "");
+  const key = `${prefix}${checksumHex}.zip`;
   options.logger.debug(`Uploading zipped data to s3://${s3Bucket}/${key}`);
 
   // Skip upload if the object exists (since md5 checksum in key implies the same content).
