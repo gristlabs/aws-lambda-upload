@@ -233,10 +233,6 @@ export async function updateLambda(startPath: string, lambdaName: string, option
   return resp;
 }
 
-interface ICfnOpts extends IS3Opts {
-  cfnEndpointUrl?: string;  // Override CloudFormation endpoint url.
-}
-
 function parseTemplate(text: string, ext: string): any {
   try { return JSON.parse(text); } catch (e1) {
     if (ext === "json") {
@@ -265,7 +261,7 @@ function parseTemplate(text: string, ext: string): any {
  * @param templatePath: Path to the JSON or YAML template file.
  * @return The template object, with certain entries replaced with S3 locations.
  */
-export async function cloudformationPackage(templatePath: string, options: ICfnOpts = dfltOpts): Promise<any> {
+export async function cloudformationPackage(templatePath: string, options: IS3Opts = dfltOpts): Promise<any> {
   options.logger.info(`Processing template ${templatePath}`);
   const templateText = await fse.readFile(templatePath, "utf8");
   const template: any = parseTemplate(templateText, path.extname(templatePath));

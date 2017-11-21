@@ -369,10 +369,9 @@ describe('aws-lambda-upload', function() {
     // TODO: should not need chdir, b/c path should be relative to template. Maybe?
     // chdirContext('test/fixtures');
     it('should upload code and transform cloudformation template', function() {
-      const cfnEndpointUrl = localstack.getService('cloudformation').endpoint;
       const s3EndpointUrl = localstack.getService('s3').endpoint;
       const region = 'us-fake';
-      return main.cloudformationPackage('test/fixtures/cfn.yml', {logger, region, cfnEndpointUrl, s3EndpointUrl})
+      return main.cloudformationPackage('test/fixtures/cfn.yml', {logger, region, s3EndpointUrl})
       .then(transformed => {
         assert.deepEqual(transformed, {
           "AWSTemplateFormatVersion": "2010-09-09",
