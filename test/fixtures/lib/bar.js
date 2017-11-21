@@ -1,2 +1,2 @@
-require('./dep.js');
-console.log("Bar");
+require('dep2');
+console.log("imported lib/bar.js");

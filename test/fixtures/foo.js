@@ -1,3 +1,3 @@
 require('dep1');
-require('./lib/dep.js');
-console.log("Foo");
+require('./lib/bar.js');
+console.log("imported foo.js");

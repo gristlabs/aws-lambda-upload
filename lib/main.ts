@@ -13,8 +13,6 @@ import {yamlParse} from "yaml-cfn";
 
 tmp.setGracefulCleanup();
 
-const zipFiles = new Map();
-
 /**
  * Run a command, returning a promise resolved on success. Similar to promisified
  * child_process.execFile(), but allows overriding options.stdio, and defaults them to 'inherit'
@@ -34,23 +32,47 @@ export function spawn(command: string, args: string[], options: any = {}): Promi
   });
 }
 
+type ZipFileCache = Map<string, string>;
+
+/**
+ * Walk topDir directory recursively, calling cb(path, stat) for each entry found.
+ * If cb() return a promise, it will be waited on before proceeding.
+ * Visits the tree in lexocographical order, and visits directories before their children.
+ */
+export async function fsWalk(topDir: string, cb: (fpath: string, stat: fse.Stats) => void): Promise<void> {
+  const todo: Array<[string, fse.Stats]> = [[topDir, await fse.stat(topDir)]];
+  while (todo.length > 0) {
+    const [fpath, st] = todo.pop()!;
+    await cb(fpath, st);
+    if (st.isDirectory()) {
+      const entries = await fse.readdir(fpath);
+      entries.sort().reverse();     // Reverse, so that pop yields entries in sorted order.
+      const paths = entries.map((e) => path.join(fpath, e));
+      const stats = await Promise.all(paths.map((p) => fse.stat(p)));
+      todo.push(...paths.map((p, i): [string, fse.Stats] => [p, stats[i]]));
+    }
+  }
+}
+
 /**
  * Collect and package code starting at the given path, into a temporary zip file.
  * @return {Promise<string>} Path to the zip file. It will be deleted on process exit.
  */
-async function _makeTmpZipFile(startPath: string, browserifyArgs: string[]): Promise<string> {
-  // Use memoized result. This is useful when processing a cloudformation template which refers to
-  // the same startPath more than once.
-  // TODO: test that it works.
-  if (zipFiles.has(startPath)) {
-    return zipFiles.get(startPath);
+async function _makeTmpZipFile(startPath: string, options: ICollectOpts): Promise<string> {
+  // Use memoized result if we are given a cache which has it.
+  if (options.cache && options.cache.has(startPath)) {
+    return options.cache.get(startPath)!;
+  }
+  const args = options.browserifyArgs || [];
+  if (options.tsconfig) {
+    args.push("-p", "[", require.resolve("tsify"), "-p", options.tsconfig, "]");
   }
 
   const stageDir = await fromCallback((cb) =>
     tmp.dir({prefix: "aws-lambda-", unsafeCleanup: true}, cb));
 
   try {
-    await collectJsDeps(["--outdir", stageDir, ...browserifyArgs, startPath]);
+    await collectJsDeps(["--outdir", stageDir, ...args, startPath]);
 
     // TODO Test what happens when startPath is absolute, and when dirname IS in fact "."
     if (path.dirname(startPath) !== ".") {
@@ -61,12 +83,18 @@ async function _makeTmpZipFile(startPath: string, browserifyArgs: string[]): Pro
       await fse.writeFile(stubPath, `module.exports = require("${startPath}");\n`);
     }
 
+    // Set all timestamps to a constant value (0) for all files, to produce consistent zip files
+    // that are identical for identical data. Otherwise timestamps cause zip files to never match.
+    await fsWalk(stageDir, (fpath, st) => fse.utimes(fpath, st.atime.getTime() / 1000, 0));
+
     const zipPath = await fromCallback((cb) =>
       tmp.tmpName({prefix: "aws-lambda-", postfix: ".zip"}, cb));
 
-    await spawn("zip", ["-q", "-r", zipPath, "."], {cwd: stageDir});
+    await spawn("zip", ["-q", "-r", "-X", zipPath, "."], {cwd: stageDir});
 
-    zipFiles.set(startPath, zipPath);
+    if (options.cache) {
+      options.cache.set(startPath, zipPath);
+    }
     return zipPath;
 
   } finally {
@@ -80,8 +108,13 @@ interface ILogger {
 }
 
 interface ICollectOpts {
-  browserifyArgs: string[];   // Arguments to pass to collect-js-deps.
+  browserifyArgs?: string[];  // Arguments to pass to collect-js-deps.
   logger: ILogger;
+  tsconfig?: string;          // Name of typescript config file, in order to support typescript
+
+  // Optional cache to reuse collect results. This is useful e.g. when processing a cloudformation
+  // template which refers to the same startPath more than once.
+  cache?: ZipFileCache;
 }
 
 const dfltOpts: ICollectOpts = {
@@ -95,7 +128,7 @@ const dfltOpts: ICollectOpts = {
  */
 export async function packageZipLocal(startPath: string, outputZipPath: string, options: ICollectOpts = dfltOpts) {
   options.logger.info(`Packaging ${startPath} to local zip file ${outputZipPath}`);
-  const tmpPath = await _makeTmpZipFile(startPath, options.browserifyArgs);
+  const tmpPath = await _makeTmpZipFile(startPath, options);
   await fse.copy(tmpPath, outputZipPath);
   options.logger.info(`Created ${outputZipPath}`);
   return outputZipPath;
@@ -144,7 +177,7 @@ export async function packageZipS3(startPath: string, options: IS3Opts = dfltOpt
     await s3.createBucket({Bucket: s3Bucket}).promise();
   }
 
-  const tmpPath = await _makeTmpZipFile(startPath, options.browserifyArgs);
+  const tmpPath = await _makeTmpZipFile(startPath, options);
   const zipData = await fse.readFile(tmpPath);
 
   // Get S3 key using s3Prefix + md5 of contents (that's what `aws cloudformation package` does).
@@ -183,7 +216,7 @@ export async function updateLambda(startPath: string, lambdaName: string, option
     region: options.region,
     endpoint: options.lambdaEndpointUrl,
   });
-  const tmpPath = await _makeTmpZipFile(startPath, options.browserifyArgs);
+  const tmpPath = await _makeTmpZipFile(startPath, options);
   const zipData = await fse.readFile(tmpPath);
   const resp = await lambda.updateFunctionCode(
     {FunctionName: lambdaName, ZipFile: zipData}).promise();
@@ -225,6 +258,9 @@ export async function cloudformationPackage(templatePath: string, options: ICfnO
   options.logger.info(`Processing template ${templatePath}`);
   const templateText = await fse.readFile(templatePath, "utf8");
   const template: any = parseTemplate(templateText);
+  if (!options.cache) {
+    options = Object.assign({ cache: new Map<string, string>() }, options);
+  }
 
   const promises: Array<Promise<void>> = [];
   Object.keys(template.Resources).forEach((key) => {
@@ -319,13 +355,9 @@ export function main() {
   const startFile = args[0];
   const browserifyArgs = args.slice(1);
   const logger: ILogger = getLogger(commander.verbose);
+  const cache = new Map<string, string>();
 
-  if (opts.tsconfig) {
-    // TODO need tests.
-    // browserifyArgs.splice(0, 0, ['-p', '[', 'tsify', '-p', opts.tsconfig, ']']);
-  }
-
-  return dispatchWork(startFile, Object.assign(opts, {browserifyArgs, logger}))
+  return dispatchWork(startFile, Object.assign(opts, {browserifyArgs, logger, cache}))
   .catch((err) => {
     logger.info("Error", err.message);
     process.exit(1);
