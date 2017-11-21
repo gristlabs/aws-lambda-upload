@@ -12,9 +12,11 @@
 
 const assert = require('chai').assert;
 const childProcess = require('child_process');
+const util = require('util');
+const debuglog = util.debuglog('localstack');     // Use NODE_DEBUG=localstack for debug output
 
 const LSTACK_CMD = ['venv/bin/python', 'test/localstack_patched.py'];
-const SERVICE_REGEX = /Starting mock (.+?) \(http port (\d+)\)/;
+const SERVICE_REGEX = /Starting mock (.+?)(?: service)? \(http port (\d+)\)/;
 const STARTED_REGEX = /^Ready.$/;
 
 let lstackServices = new Map();
@@ -45,10 +47,10 @@ function getService(service) {
 exports.getService = getService;
 
 
-// Localstack uses human-friendly names to report which port each service is started on. We can
-// get the service name as used when requesting a service by removing spaces and lowercasing (so
-// far seems sufficient).
+// Localstack uses human-friendly names to report which port each service is started on.
+// This translates from those to the service name as used when requesting a service.
 function reportedNameToServiceName(reportedName) {
+  // For most services, it's enough to remove spaces and lowercase.
   return reportedName.replace(/\s/g, '').toLowerCase();
 }
 
@@ -88,7 +90,7 @@ before(function() {
       while ((newline = partial.indexOf("\n")) !== -1) {
         let line = partial.slice(0, newline).trim();
         partial = partial.slice(newline + 1);
-        // console.log("LOCALSTACK:", line);
+        debuglog('LOCALSTACK:', line);
 
         let matches;
         if ((matches = SERVICE_REGEX.exec(line)) !== null) {

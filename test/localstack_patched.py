@@ -6,7 +6,7 @@ warnings from MacOS about allowing Python to receive incoming network connection
 # respect some environment variables for which address to listen on.
 import runpy
 
-from localstack.services.generic_proxy import GenericProxy
+from localstack.services import generic_proxy
 from localstack import constants
 
 
@@ -16,16 +16,28 @@ from localstack import constants
 # all network interfaces, requiring on MacOS a warning from the Firewall whether to allow Python
 # to receive incoming network connections. Using 'localhost' avoids that.
 def patch_GenericProxy_init():
-  orig_init = GenericProxy.__init__
+  orig_init = generic_proxy.GenericProxy.__init__
 
   def new_init(self, *args, **kwargs):
     kwargs.setdefault('host', 'localhost')
     orig_init(self, *args, **kwargs)
 
-  GenericProxy.__init__ = new_init
+  generic_proxy.GenericProxy.__init__ = new_init
+
+
+# Same kind of monkey patching is needed for serve_flask_app.
+def patch_serve_flask_app():
+  orig_serve = generic_proxy.serve_flask_app
+
+  def new_serve(*args, **kwargs):
+    kwargs.setdefault('host', 'localhost')
+    orig_serve(*args, **kwargs)
+
+  generic_proxy.serve_flask_app = new_serve
 
 
 patch_GenericProxy_init()
+patch_serve_flask_app()
 
 # Also change BIND_HOST to use localhost instead of '0.0.0.0' (which also triggers the warning).
 constants.BIND_HOST = 'localhost'

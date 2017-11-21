@@ -16,7 +16,7 @@ chai.use(chaiAsPromised);
 const assert = chai.assert;
 
 tmp.setGracefulCleanup();
-localstack.addServices(['s3']);
+localstack.addServices(['s3', 'lambda']);
 
 describe('spawn', function() {
   it('should resolve or reject returned promise', function() {
@@ -313,6 +313,33 @@ describe('aws-lambda-upload', function() {
         assert.match(log[log.length - 1], /uploaded/);
       });
     });
+  });
 
+  describe('updateLambda', function() {
+    chdirContext('test/fixtures');
+
+    it('should update lambdas', function() {
+      const lambdaEndpointUrl = localstack.getService('lambda').endpoint;
+      const s3EndpointUrl = localstack.getService('s3').endpoint;
+      const region = 'us-fake';
+
+      const lambda = new AWS.Lambda({region, endpoint: lambdaEndpointUrl});
+      return main.packageZipS3('lib/lambda.js', {logger, region, s3EndpointUrl})
+      .then(s3Loc => lambda.createFunction({
+        FunctionName: 'testMyLambda',
+        Runtime: 'nodejs6.10',
+        Handler: 'lambda.myLambda',
+        Code: {S3Bucket: s3Loc.bucket, S3Key: s3Loc.key},
+        Role: 'test-role'
+      }).promise())
+      .then(() => main.updateLambda('lib/lambda.js', 'testMyLambda',
+        {logger, region, lambdaEndpointUrl}))
+      // TODO: We can't actually test it easily because localstack only supports lambdas with
+      // docker, and that seems to heavy a dependency for this kind of test.
+      // .then(() => lambda.invoke({FunctionName: 'testMyLambda'}).promise())
+      .then((data) => {
+        assert.isTrue(log.some(l => /Updated labmda testMyLambda/));
+      });
+    });
   });
 });
