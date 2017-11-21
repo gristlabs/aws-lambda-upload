@@ -237,10 +237,13 @@ interface ICfnOpts extends IS3Opts {
   cfnEndpointUrl?: string;  // Override CloudFormation endpoint url.
 }
 
-function parseTemplate(text: string): any {
+function parseTemplate(text: string, ext: string): any {
   try { return JSON.parse(text); } catch (e1) {
+    if (ext === "json") {
+      throw new Error(`Unable to parse JSON template: ${e1}`);
+    }
     try { return yamlParse(text); } catch (e2) {
-      throw new Error(`Unable to parse template: ${e2}`);
+      throw new Error(`Unable to parse YAML template: ${e2}`);
     }
   }
 }
@@ -265,27 +268,19 @@ function parseTemplate(text: string): any {
 export async function cloudformationPackage(templatePath: string, options: ICfnOpts = dfltOpts): Promise<any> {
   options.logger.info(`Processing template ${templatePath}`);
   const templateText = await fse.readFile(templatePath, "utf8");
-  const template: any = parseTemplate(templateText);
+  const template: any = parseTemplate(templateText, path.extname(templatePath));
   if (!options.cache) {
     options = Object.assign({ cache: new Map<string, string>() }, options);
   }
 
-  const promises: Array<Promise<void>> = [];
-  Object.keys(template.Resources).forEach((key) => {
-    const res = template.Resources[key];
-    if (res.Type === "AWS::Lambda::Function") {
-      promises.push(resolveCfnPath(key, res, "Code",
-        (obj: IS3Location) => ({S3Bucket: obj.bucket, S3Key: obj.key})));
-    } else if (res.Type === "AWS::Serverless::Function") {
-      promises.push(resolveCfnPath(key, res, "CodeUri",
-        (obj: IS3Location) => `s3://${obj.bucket}/${obj.key}`));
-    }
-  });
-
   // Helper function to process a single property in the template file.
   async function resolveCfnPath(key: string, resource: any, prop: string,
                                 converter: (obj: IS3Location) => any) {
-    const cfnValue = resource[prop];
+    if (!resource.Properties) {
+      options.logger.debug(`Template resource ${key} has no properties; skipping`);
+      return;
+    }
+    const cfnValue = resource.Properties[prop];
     if (typeof cfnValue !== "string" || /^(s3|https?):\/\//.test(cfnValue)) {
       options.logger.debug(`Template property ${prop} of ${key} is not a path; skipping`);
       return;
@@ -296,11 +291,20 @@ export async function cloudformationPackage(templatePath: string, options: ICfnO
       return;
     }
     const s3Info = await packageZipS3(cfnPath, options);
-    resource[prop] = converter(s3Info);
+    resource.Properties[prop] = converter(s3Info);
     options.logger.info(`Template property ${prop} of ${key} updated`);
   }
 
-  await Promise.all(promises);
+  for (const key of Object.keys(template.Resources)) {
+    const res = template.Resources[key];
+    if (res.Type === "AWS::Lambda::Function") {
+      await resolveCfnPath(key, res, "Code",
+        (obj: IS3Location) => ({S3Bucket: obj.bucket, S3Key: obj.key}));
+    } else if (res.Type === "AWS::Serverless::Function") {
+      await resolveCfnPath(key, res, "CodeUri",
+        (obj: IS3Location) => `s3://${obj.bucket}/${obj.key}`);
+    }
+  }
   return template;
 }
 

@@ -6,6 +6,7 @@ const chaiAsPromised = require('chai-as-promised');
 const bluebird = require('bluebird');
 const fse = require('fs-extra');
 const path = require('path');
+const util = require('util');
 const tmp = bluebird.promisifyAll(require('tmp'));
 const childProcess = bluebird.promisifyAll(require('child_process'));
 const main = require('../dist/main.js');
@@ -16,7 +17,7 @@ chai.use(chaiAsPromised);
 const assert = chai.assert;
 
 tmp.setGracefulCleanup();
-localstack.addServices(['s3', 'lambda']);
+localstack.addServices(['s3', 'lambda', 'cloudformation']);
 
 describe('spawn', function() {
   it('should resolve or reject returned promise', function() {
@@ -36,12 +37,15 @@ describe('fsWalk', function() {
     return main.fsWalk('test/fixtures', (p, st) => entries.push([p, st.isDirectory()]))
     .then(() => assert.deepEqual(entries, [
       ['test/fixtures', true],
+      ['test/fixtures/cfn.yml', false],
       ['test/fixtures/foo.js', false],
       ['test/fixtures/foo_abs.js', false],
       ['test/fixtures/foo_ts.ts', false],
       ['test/fixtures/lib', true],
       ['test/fixtures/lib/bar.js', false],
       ['test/fixtures/lib/baz_ts.ts', false],
+      ['test/fixtures/lib/lambda.js', false],
+      ['test/fixtures/lib/lambda_dep.js', false],
       ['test/fixtures/node_modules', true],
       ['test/fixtures/node_modules/dep1', true],
       ['test/fixtures/node_modules/dep1/hello.js', false],
@@ -84,6 +88,24 @@ function runZipFile(zipFile, entryFile) {
   });
 }
 
+/**
+ * Ensure that array contains elements matching each regexp in regexpList, in the order given.
+ * Non-matching elements are ignored.
+ */
+function assertSubsetMatchesInOrder(array, regexpList) {
+  function findNext(index, r) {
+    for (let i = index; i < array.length; i++) {
+      if (r.test(array[i])) { return i; }
+    }
+    assert.fail(array.slice(i), regexpList[r],
+      `expected ${util.inspect(array.slice(i))} to include a match for ${util.inspect(r)}`);
+  }
+
+  let i = 0;
+  for (const r of regexpList) {
+    i = findNext(i, r) + 1;
+  }
+}
 
 /**
  * Use in describe() to run tests with environment variable `name` set to `value`.
@@ -339,6 +361,52 @@ describe('aws-lambda-upload', function() {
       // .then(() => lambda.invoke({FunctionName: 'testMyLambda'}).promise())
       .then((data) => {
         assert.isTrue(log.some(l => /Updated labmda testMyLambda/));
+      });
+    });
+  });
+
+  describe('cloudformationPackage', function() {
+    // TODO: should not need chdir, b/c path should be relative to template. Maybe?
+    // chdirContext('test/fixtures');
+    it('should upload code and transform cloudformation template', function() {
+      const cfnEndpointUrl = localstack.getService('cloudformation').endpoint;
+      const s3EndpointUrl = localstack.getService('s3').endpoint;
+      const region = 'us-fake';
+      return main.cloudformationPackage('test/fixtures/cfn.yml', {logger, region, cfnEndpointUrl, s3EndpointUrl})
+      .then(transformed => {
+        assert.deepEqual(transformed, {
+          "AWSTemplateFormatVersion": "2010-09-09",
+          "Transform": "AWS::Serverless-2016-10-31",
+          "Resources": {
+            "MyFunction": {
+              "Type": "AWS::Serverless::Function",
+              "Properties": {
+                "Handler": "index.handler",
+                "Runtime": "nodejs6.10",
+                "CodeUri": "s3://aws-lambda-upload/6c2d71ca8a04470fbb7c2da5e87dd8f2.zip"
+              }
+            },
+            "MyFunction2": {
+              "Type": "AWS::Lambda::Function",
+              "Properties": {
+                "FunctionName": "myTestLambda,",
+                "Handler": "lambda.myLambda,",
+                "Runtime": "nodejs6.10,",
+                "Code": {
+                  "S3Bucket": "aws-lambda-upload",
+                  "S3Key": "6c2d71ca8a04470fbb7c2da5e87dd8f2.zip"
+                }
+              }
+            }
+          }
+        });
+
+        assertSubsetMatchesInOrder(log, [
+          /Collecting files.*lib\/lambda.js/,
+          /s3:.* uploaded/,
+          /Reusing cached.*lib\/lambda.js/,
+          /s3:.* skipping upload/
+        ]);
       });
     });
   });
