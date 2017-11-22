@@ -13,6 +13,30 @@ import {yamlParse} from "yaml-cfn";
 
 tmp.setGracefulCleanup();
 
+export interface ILogger {
+  info(message?: string, ...optionalParams: any[]): void;
+  debug(message?: string, ...optionalParams: any[]): void;
+}
+
+export interface ICollectOpts {
+  browserifyArgs?: string[];  // Arguments to pass to collect-js-deps.
+  logger?: ILogger;
+  tsconfig?: string;          // Name of typescript config file, in order to support typescript
+
+  // Optional cache to reuse collect results. This is useful e.g. when processing a cloudformation
+  // template which refers to the same startPath more than once.
+  cache?: ZipFileCache;
+}
+
+const dfltLogger: ILogger = getLogger(true);
+
+function getLogger(verbose: boolean): ILogger {
+  return {
+    info: console.info.bind(console),
+    debug: verbose ? console.log.bind(console) : (() => {/* noop */}),
+  };
+}
+
 /**
  * Run a command, returning a promise resolved on success. Similar to promisified
  * child_process.execFile(), but allows overriding options.stdio, and defaults them to 'inherit'
@@ -32,7 +56,7 @@ export function spawn(command: string, args: string[], options: any = {}): Promi
   });
 }
 
-type ZipFileCache = Map<string, string>;
+export type ZipFileCache = Map<string, string>;
 
 /**
  * Walk topDir directory recursively, calling cb(path, stat) for each entry found.
@@ -59,9 +83,10 @@ export async function fsWalk(topDir: string, cb: (fpath: string, stat: fse.Stats
  * @return {Promise<string>} Path to the zip file. It will be deleted on process exit.
  */
 async function _makeTmpZipFile(startPath: string, options: ICollectOpts): Promise<string> {
+  const logger = options.logger || dfltLogger;
   // Use memoized result if we are given a cache which has it.
   if (options.cache && options.cache.has(startPath)) {
-    options.logger.debug(`Reusing cached zip file for ${startPath}`);
+    logger.debug(`Reusing cached zip file for ${startPath}`);
     return options.cache.get(startPath)!;
   }
   const args = options.browserifyArgs || [];
@@ -73,7 +98,7 @@ async function _makeTmpZipFile(startPath: string, options: ICollectOpts): Promis
     tmp.dir({prefix: "aws-lambda-", unsafeCleanup: true}, cb));
 
   try {
-    options.logger.debug(`Collecting files from ${startPath} in ${stageDir}`);
+    logger.debug(`Collecting files from ${startPath} in ${stageDir}`);
     await collectJsDeps(["--outdir", stageDir, ...args, startPath]);
 
     // TODO Test what happens when startPath is absolute, and when dirname IS in fact "."
@@ -109,46 +134,27 @@ async function _makeTmpZipFile(startPath: string, options: ICollectOpts): Promis
   }
 }
 
-interface ILogger {
-  info(message?: string, ...optionalParams: any[]): void;
-  debug(message?: string, ...optionalParams: any[]): void;
-}
-
-interface ICollectOpts {
-  browserifyArgs?: string[];  // Arguments to pass to collect-js-deps.
-  logger: ILogger;
-  tsconfig?: string;          // Name of typescript config file, in order to support typescript
-
-  // Optional cache to reuse collect results. This is useful e.g. when processing a cloudformation
-  // template which refers to the same startPath more than once.
-  cache?: ZipFileCache;
-}
-
-const dfltOpts: ICollectOpts = {
-  browserifyArgs: [],
-  logger: getLogger(true),
-};
-
 /**
  * Collect and package lambda code starting at the entry file startPath, to a local zip file at
  * outputZipPath. Will overwrite the destination if it exists. Returns outputZipPath.
  */
-export async function packageZipLocal(startPath: string, outputZipPath: string, options: ICollectOpts = dfltOpts) {
-  options.logger.info(`Packaging ${startPath} to local zip file ${outputZipPath}`);
+export async function packageZipLocal(startPath: string, outputZipPath: string, options: ICollectOpts = {}) {
+  const logger = options.logger || dfltLogger;
+  logger.info(`Packaging ${startPath} to local zip file ${outputZipPath}`);
   const tmpPath = await _makeTmpZipFile(startPath, options);
   await fse.copy(tmpPath, outputZipPath);
-  options.logger.info(`Created ${outputZipPath}`);
+  logger.info(`Created ${outputZipPath}`);
   return outputZipPath;
 }
 
-interface IS3Opts extends ICollectOpts {
+export interface IS3Opts extends ICollectOpts {
   region?: string;          // Region to use, overriding config/env settings.
   s3Bucket?: string;        // S3 bucket to which to upload (default "aws-lambda-upload")
   s3Prefix?: string;        // Prefix (folder) added to uploaded zip files (default "")
   s3EndpointUrl?: string;   // Override S3 endpoint url.
 }
 
-interface IS3Location {
+export interface IS3Location {
   bucket: string;
   key: string;
 }
@@ -157,10 +163,11 @@ interface IS3Location {
  * Collect and package lambda code and upload it to S3.
  * @return Promise for the object {bucket, key} describing the location of the uploaded file.
  */
-export async function packageZipS3(startPath: string, options: IS3Opts = dfltOpts): Promise<IS3Location> {
+export async function packageZipS3(startPath: string, options: IS3Opts = {}): Promise<IS3Location> {
+  const logger = options.logger || dfltLogger;
   const s3Bucket = options.s3Bucket || "aws-lambda-upload";
   const s3Prefix = options.s3Prefix || "";
-  options.logger.info(`Packaging ${startPath} for ${options.region} s3://${s3Bucket}/${s3Prefix}...`);
+  logger.info(`Packaging ${startPath} for ${options.region} s3://${s3Bucket}/${s3Prefix}...`);
   const s3 = new AWS.S3({
     region: options.region,
     endpoint: options.s3EndpointUrl,
@@ -172,7 +179,7 @@ export async function packageZipS3(startPath: string, options: IS3Opts = dfltOpt
   // Check S3 bucket, and create if needed.
   try {
     await s3.headBucket({Bucket: s3Bucket}).promise();
-    options.logger.debug(`Bucket s3://${s3Bucket} exists`);
+    logger.debug(`Bucket s3://${s3Bucket} exists`);
   } catch (err) {
     if (err.code === "Forbidden") {
       throw new Error(`Can't read s3://${s3Bucket}: grant AWS permissions or change --s3-bucket`);
@@ -180,7 +187,7 @@ export async function packageZipS3(startPath: string, options: IS3Opts = dfltOpt
     if (err.code !== "NotFound") {
       throw err;
     }
-    options.logger.info(`Bucket s3://${s3Bucket} missing; creating`);
+    logger.info(`Bucket s3://${s3Bucket} missing; creating`);
     await s3.createBucket({Bucket: s3Bucket}).promise();
   }
 
@@ -193,22 +200,22 @@ export async function packageZipS3(startPath: string, options: IS3Opts = dfltOpt
   const checksumB64 = checksumBuf.toString("base64");
   const prefix = s3Prefix && !s3Prefix.endsWith("/") ? s3Prefix + "/" : (s3Prefix || "");
   const key = `${prefix}${checksumHex}.zip`;
-  options.logger.debug(`Uploading zipped data to s3://${s3Bucket}/${key}`);
+  logger.debug(`Uploading zipped data to s3://${s3Bucket}/${key}`);
 
   // Skip upload if the object exists (since md5 checksum in key implies the same content).
   try {
     await s3.headObject({Bucket: s3Bucket, Key: key}).promise();
-    options.logger.info(`s3://${s3Bucket}/${key} already exists, skipping upload`);
+    logger.info(`s3://${s3Bucket}/${key} already exists, skipping upload`);
   } catch (err) {
     if (err.code !== "NotFound") { throw err; }
     // Do the upload to S3.
     await s3.upload({ Body: zipData, Bucket: s3Bucket, Key: key, ContentMD5: checksumB64 }).promise();
-    options.logger.info(`s3://${s3Bucket}/${key} uploaded`);
+    logger.info(`s3://${s3Bucket}/${key} uploaded`);
   }
   return { bucket: s3Bucket, key };
 }
 
-interface ILambdaOpts extends ICollectOpts {
+export interface ILambdaOpts extends ICollectOpts {
   region?: string;              // Region to use, overriding config/env settings.
   lambdaEndpointUrl?: string;   // Override Lambda endpoint url.
 }
@@ -218,17 +225,18 @@ interface ILambdaOpts extends ICollectOpts {
  * @return {Object} Promise for the response as returned by AWS Lambda UpdateFunctionCode.
  *  See http://docs.aws.amazon.com/lambda/latest/dg/API_UpdateFunctionCode.html
  */
-export async function updateLambda(startPath: string, lambdaName: string, options: ILambdaOpts = dfltOpts) {
-  options.logger.info(`Packaging ${startPath} to update lambda ${lambdaName}`);
+export async function updateLambda(startPath: string, lambdaName: string,
+                                   options: ILambdaOpts = {}): Promise<any> {
+  const logger = options.logger || dfltLogger;
+  logger.info(`Packaging ${startPath} to update lambda ${lambdaName}`);
   const lambda = new AWS.Lambda({
     region: options.region,
     endpoint: options.lambdaEndpointUrl,
   });
   const tmpPath = await _makeTmpZipFile(startPath, options);
   const zipData = await fse.readFile(tmpPath);
-  const resp = await lambda.updateFunctionCode(
-    {FunctionName: lambdaName, ZipFile: zipData}).promise();
-  options.logger.info(`Updated lambda ${lambdaName} version ${resp.Version} ` +
+  const resp = await lambda.updateFunctionCode({FunctionName: lambdaName, ZipFile: zipData}).promise();
+  logger.info(`Updated lambda ${lambdaName} version ${resp.Version} ` +
     `(${resp.CodeSize} bytes) at ${resp.LastModified}`);
   return resp;
 }
@@ -261,8 +269,9 @@ function parseTemplate(text: string, ext: string): any {
  * @param templatePath: Path to the JSON or YAML template file.
  * @return The template object, with certain entries replaced with S3 locations.
  */
-export async function cloudformationPackage(templatePath: string, options: IS3Opts = dfltOpts): Promise<any> {
-  options.logger.info(`Processing template ${templatePath}`);
+export async function cloudformationPackage(templatePath: string, options: IS3Opts = {}): Promise<any> {
+  const logger = options.logger || dfltLogger;
+  logger.info(`Processing template ${templatePath}`);
   const templateText = await fse.readFile(templatePath, "utf8");
   const template: any = parseTemplate(templateText, path.extname(templatePath));
   if (!options.cache) {
@@ -273,22 +282,22 @@ export async function cloudformationPackage(templatePath: string, options: IS3Op
   async function resolveCfnPath(key: string, resource: any, prop: string,
                                 converter: (obj: IS3Location) => any) {
     if (!resource.Properties) {
-      options.logger.debug(`Template resource ${key} has no properties; skipping`);
+      logger.debug(`Template resource ${key} has no properties; skipping`);
       return;
     }
     const cfnValue = resource.Properties[prop];
     if (typeof cfnValue !== "string" || /^(s3|https?):\/\//.test(cfnValue)) {
-      options.logger.debug(`Template property ${prop} of ${key} is not a path; skipping`);
+      logger.debug(`Template property ${prop} of ${key} is not a path; skipping`);
       return;
     }
     const cfnPath = path.resolve(path.dirname(templatePath), cfnValue);
     if (!await fse.pathExists(cfnPath)) {
-      options.logger.info(`Template property ${prop} of ${key}: ${cfnPath} does not exist; skipping`);
+      logger.info(`Template property ${prop} of ${key}: ${cfnPath} does not exist; skipping`);
       return;
     }
     const s3Info = await packageZipS3(cfnPath, options);
     resource.Properties[prop] = converter(s3Info);
-    options.logger.info(`Template property ${prop} of ${key} updated`);
+    logger.info(`Template property ${prop} of ${key} updated`);
   }
 
   for (const key of Object.keys(template.Resources)) {
@@ -311,21 +320,15 @@ export async function cloudformationPackage(templatePath: string, options: IS3Op
  * @return Promise that's resolved when the template has been written.
  */
 export async function cloudformationPackageOutput(templatePath: string, outputPath: string, options: any) {
+  const logger = options.logger || dfltLogger;
   const template = await cloudformationPackage(templatePath, options);
   const json = JSON.stringify(template, null, 2);
-  options.logger.info(`Writing out process template to ${outputPath}`);
+  logger.info(`Writing out process template to ${outputPath}`);
   if (outputPath === "-") {
     return fromCallback((cb) => process.stdout.write(json, "utf8", cb));
   } else {
     return fse.writeFile(outputPath, json);
   }
-}
-
-function getLogger(verbose: boolean): ILogger {
-  return {
-    info: console.info.bind(console),
-    debug: verbose ? console.log.bind(console) : (() => {/* noop */}),
-  };
 }
 
 /**
