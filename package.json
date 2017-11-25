@@ -30,7 +30,7 @@
   },
   "homepage": "https://github.com/gristlabs/aws-lambda-upload#readme",
   "dependencies": {
-    "aws-sdk": "^2.78.0",
+    "aws-sdk": "^2.141.0",
     "bluebird": "^3.5.0",
     "browserify": "^14.4.0",
     "collect-js-deps": "^0.1.0",

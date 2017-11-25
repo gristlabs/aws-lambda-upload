@@ -13,6 +13,8 @@ import {yamlParse} from "yaml-cfn";
 
 tmp.setGracefulCleanup();
 
+const defaultBucket = "aws-lambda-upload";
+
 export interface ILogger {
   info(message?: string, ...optionalParams: any[]): void;
   debug(message?: string, ...optionalParams: any[]): void;
@@ -22,6 +24,7 @@ export interface ICollectOpts {
   browserifyArgs?: string[];  // Arguments to pass to collect-js-deps.
   logger?: ILogger;
   tsconfig?: string;          // Name of typescript config file, in order to support typescript
+  nodePath?: string;          // Value for NODE_PATH environment variable for collect-js-deps.
 
   // Optional cache to reuse collect results. This is useful e.g. when processing a cloudformation
   // template which refers to the same startPath more than once.
@@ -94,11 +97,15 @@ async function _makeTmpZipFile(startPath: string, options: ICollectOpts): Promis
     args.push("-p", "[", require.resolve("tsify"), "-p", options.tsconfig, "]");
   }
 
+  const prevNodePath = process.env.NODE_PATH;
   const stageDir = await fromCallback((cb) =>
     tmp.dir({prefix: "aws-lambda-", unsafeCleanup: true}, cb));
 
   try {
     logger.debug(`Collecting files from ${startPath} in ${stageDir}`);
+    if (options.nodePath !== undefined) {
+      process.env.NODE_PATH = options.nodePath;
+    }
     await collectJsDeps(["--outdir", stageDir, ...args, startPath]);
 
     // TODO Test what happens when startPath is absolute, and when dirname IS in fact "."
@@ -130,6 +137,7 @@ async function _makeTmpZipFile(startPath: string, options: ICollectOpts): Promis
     return zipPath;
 
   } finally {
+    process.env.NODE_PATH = prevNodePath;
     fse.remove(stageDir);
   }
 }
@@ -165,7 +173,7 @@ export interface IS3Location {
  */
 export async function packageZipS3(startPath: string, options: IS3Opts = {}): Promise<IS3Location> {
   const logger = options.logger || dfltLogger;
-  const s3Bucket = options.s3Bucket || "aws-lambda-upload";
+  const s3Bucket = options.s3Bucket || defaultBucket;
   const s3Prefix = options.s3Prefix || "";
   logger.info(`Packaging ${startPath} for ${options.region} s3://${s3Bucket}/${s3Prefix}...`);
   const s3 = new AWS.S3({
@@ -346,7 +354,8 @@ export function main() {
     "   (.json or .yml), and package lambda code mentioned there. Replaces code references\n" +
     "   with S3 locations, and outpus adjusted template to <output-path> ('-' for stdout)")
   .option("-r, --region <string>", "AWS region to use, for --lambda or --s3 flags")
-  .option("--s3-bucket <string>", "S3 bucket to which to upload zip files", "aws-lambda-upload")
+  .option("--s3-bucket <string>", "S3 bucket to which to upload zip files " +
+    `(default ${defaultBucket})`, defaultBucket)
   .option("--s3-prefix <string>", "Prefix (folder) added to zip files uploaded to S3", "")
   .option("--s3-endpoint-url <string>", "Override S3 endpoint url", (v) => new AWS.Endpoint(v))
   .option("-v, --verbose", "Produce verbose output")
