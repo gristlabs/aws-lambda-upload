@@ -137,3 +137,16 @@ E.g. the following policy works for the default bucket used by `aws-lambda-uploa
  }
 ```
 </details>
+
+## Running tests
+
+Before you run tests for the first time, you need to set up
+[localstack](https://github.com/localstack/localstack). You can do it with
+
+```
+npm run setup-localstack
+```
+
+Note that localstack has a number of [requirements](https://github.com/localstack/localstack#requirements).
+
+Once set up, you can run tests with `npm test` as usual.

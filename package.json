@@ -7,7 +7,7 @@
   "scripts": {
     "build": "tsc",
     "watch": "tsc -w",
-    "test": "mocha -R list test/",
+    "test": "tsc && mocha -R list test/",
     "setup-localstack": "python3 -m venv venv && venv/bin/pip install localstack"
   },
   "bin": {
@@ -33,11 +33,11 @@
     "aws-sdk": "^2.141.0",
     "bluebird": "^3.5.0",
     "browserify": "^14.4.0",
-    "collect-js-deps": "^0.1.0",
+    "collect-js-deps": "^0.1.1",
     "commander": "^2.10.0",
     "fs-extra": "^4.0.2",
     "tmp": "0.0.33",
-    "yaml-cfn": "^0.1.1"
+    "yaml-cfn": "^0.2.0"
   },
   "devDependencies": {
     "@types/bluebird": "^3.5.18",
