@@ -1,6 +1,6 @@
 {
   "name": "aws-lambda-upload",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Package and upload an AWS lambda with its minimal dependencies",
   "main": "dist/main",
   "typings": "dist/main",
