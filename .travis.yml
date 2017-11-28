@@ -1,6 +1,9 @@
 language: node_js
 sudo: false
-before_install: npm run setup-localstack
+before_install:
+  - npm run setup-localstack
 node_js:
   - 6
   - 7
+python:
+  - "3.6"
