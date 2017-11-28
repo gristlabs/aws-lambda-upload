@@ -1,3 +1,6 @@
+/dist/
+/venv/
+
 # Logs
 logs
 *.log
