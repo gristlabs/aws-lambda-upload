@@ -281,6 +281,7 @@ describe('aws-lambda-upload', function() {
   });
 
   describe('packageZipS3', function() {
+    let barZip = null;
 
     chdirContext('test/fixtures');
 
@@ -288,10 +289,9 @@ describe('aws-lambda-upload', function() {
       const s3EndpointUrl = localstack.getService('s3').endpoint;
       return main.packageZipS3('lib/bar.js', {logger, s3EndpointUrl})
       .then(s3Loc => {
-        assert.deepEqual(s3Loc, {
-          bucket: "aws-lambda-upload",
-          key: "731c671e440cb3cea7bdc0b5bcaada2d.zip"
-        });
+        barZip = s3Loc.key;
+        assert.match(barZip, /^[0-9a-f]{32}\.zip$/);
+        assert.deepEqual(s3Loc, {bucket: "aws-lambda-upload", key: barZip});
         assert.match(log.find(l => /Bucket/.test(l)), /creating/);
         assert.match(log[log.length - 1], /uploaded/);
 
@@ -317,10 +317,7 @@ describe('aws-lambda-upload', function() {
       const s3EndpointUrl = localstack.getService('s3').endpoint;
       return main.packageZipS3('lib/bar.js', {logger, s3EndpointUrl})
       .then(s3Loc => {
-        assert.deepEqual(s3Loc, {
-          bucket: "aws-lambda-upload",
-          key: "731c671e440cb3cea7bdc0b5bcaada2d.zip"
-        });
+        assert.deepEqual(s3Loc, {bucket: "aws-lambda-upload", key: barZip});
         assert.match(log.find(l => /Bucket/.test(l)), /exists/);
         assert.match(log[log.length - 1], /skipping upload/);
       });
@@ -331,10 +328,7 @@ describe('aws-lambda-upload', function() {
       const params = {logger, s3EndpointUrl, s3Bucket: 'foo', s3Prefix: 'bar/baz/'};
       return main.packageZipS3('lib/bar.js', params)
       .then(s3Loc => {
-        assert.deepEqual(s3Loc, {
-          bucket: "foo",
-          key: "bar/baz/731c671e440cb3cea7bdc0b5bcaada2d.zip"
-        });
+        assert.deepEqual(s3Loc, {bucket: "foo", key: `bar/baz/${barZip}`});
         assert.match(log[log.length - 1], /uploaded/);
       });
     });
@@ -369,13 +363,14 @@ describe('aws-lambda-upload', function() {
   });
 
   describe('cloudformationPackage', function() {
-    // TODO: should not need chdir, b/c path should be relative to template. Maybe?
-    // chdirContext('test/fixtures');
     it('should upload code and transform cloudformation template', function() {
       const s3EndpointUrl = localstack.getService('s3').endpoint;
       const region = 'us-fake';
+      let zipName = null;
       return main.cloudformationPackage('test/fixtures/cfn.yml', {logger, region, s3EndpointUrl})
       .then(transformed => {
+        zipName = transformed.Resources.MyFunction2.Properties.Code.S3Key;
+        assert.match(zipName, /^[0-9a-f]{32}\.zip$/);
         assert.deepEqual(transformed, {
           "AWSTemplateFormatVersion": "2010-09-09",
           "Transform": "AWS::Serverless-2016-10-31",
@@ -385,7 +380,7 @@ describe('aws-lambda-upload', function() {
               "Properties": {
                 "Handler": "index.handler",
                 "Runtime": "nodejs6.10",
-                "CodeUri": "s3://aws-lambda-upload/6c2d71ca8a04470fbb7c2da5e87dd8f2.zip"
+                "CodeUri": `s3://aws-lambda-upload/${zipName}`
               }
             },
             "MyFunction2": {
@@ -396,7 +391,7 @@ describe('aws-lambda-upload', function() {
                 "Runtime": "nodejs6.10,",
                 "Code": {
                   "S3Bucket": "aws-lambda-upload",
-                  "S3Key": "6c2d71ca8a04470fbb7c2da5e87dd8f2.zip"
+                  "S3Key": zipName
                 }
               }
             }
