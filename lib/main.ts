@@ -211,11 +211,11 @@ export async function packageZipS3(startPath: string, options: IS3Opts = {}): Pr
   logger.debug(`Uploading zipped data to s3://${s3Bucket}/${key}`);
 
   // Skip upload if the object exists (since md5 checksum in key implies the same content).
-  try {
-    await s3.headObject({Bucket: s3Bucket, Key: key}).promise();
+  const {Contents} = await s3.listObjectsV2({Bucket: s3Bucket, MaxKeys: 1, Prefix: key}).promise();
+  const exists = (Contents && Contents.length > 0 && Contents[0].Key === key);
+  if (exists) {
     logger.info(`s3://${s3Bucket}/${key} already exists, skipping upload`);
-  } catch (err) {
-    if (err.code !== "NotFound") { throw err; }
+  } else {
     // Do the upload to S3.
     await s3.upload({ Body: zipData, Bucket: s3Bucket, Key: key, ContentMD5: checksumB64 }).promise();
     logger.info(`s3://${s3Bucket}/${key} uploaded`);

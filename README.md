@@ -103,7 +103,7 @@ at least give you the permission of `lambda:UpdateFunctionCode` for the
 resource of `arn:aws:lambda:<region>:<account-id>:function:<function-name>`.
 Read more [here](http://docs.aws.amazon.com/lambda/latest/dg/lambda-api-permissions-ref.html).
 
-To use `--s3` or `--cfn` flags, the credentials need to give you the permission to read and create objects in the relevant S3 bucket.
+To use `--s3` or `--cfn` flags, the credentials need to give you the permission to list and create objects in the relevant S3 bucket.
 E.g. the following policy works for the default bucket used by `aws-lambda-upload`:
 
 <details>
@@ -127,7 +127,6 @@ E.g. the following policy works for the default bucket used by `aws-lambda-uploa
             "Effect": "Allow",
             "Action": [
                 "s3:PutObject",
-                "s3:GetObjectVersion"
             ],
             "Resource": [
                 "arn:aws:s3:::aws-lambda-upload/*"
