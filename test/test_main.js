@@ -19,6 +19,8 @@ const assert = chai.assert;
 tmp.setGracefulCleanup();
 localstack.addServices(['s3', 'lambda', 'cloudformation']);
 
+AWS.config.credentials = new AWS.Credentials('localstack-key-id', 'localstack-access-key');
+
 describe('spawn', function() {
   it('should resolve or reject returned promise', function() {
     return main.spawn('true', [])
@@ -72,7 +74,8 @@ function listZipNames(zipFile) {
     // Ignore non-word lines (e.g. Linux and Max differ on whether '----' is printed).
     .filter(name => name && /\w/.test(name))
     // Filter out directories and the "Name" header in the first line.
-    .filter((name, i) => !(i === 0 && name === 'Name') && !name.endsWith('/'));
+    .filter((name, i) => !(i === 0 && name === 'Name') && !name.endsWith('/'))
+    .sort();
   });
 }
 
