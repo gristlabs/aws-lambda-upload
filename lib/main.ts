@@ -113,8 +113,10 @@ async function _makeTmpZipFile(startPath: string, options: ICollectOpts): Promis
       // If startPath is not at top-level, create a helper top-level alias for it, since Lambdas
       // require the entry file to be top-level. (We can't solve this by moving files around as that
       // would break relative imports.)
-      const stubPath = path.join(stageDir, path.basename(startPath));
-      const requirePath = path.relative("", startPath);
+      // Force startPath's extension to .js (e.g. if it's being compiled from TypeScript).
+      const start = path.parse(startPath);
+      const stubPath = path.join(stageDir, start.name + ".js");
+      const requirePath = path.relative("", path.join(start.dir, start.name));
       await fse.writeFile(stubPath, `module.exports = require("./${requirePath}");\n`);
     }
 
